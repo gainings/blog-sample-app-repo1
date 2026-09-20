@@ -1,0 +1,146 @@
+# main へのマージを起点にしたリリースパイプライン (アプリ側)。
+#
+#   build ──> tagpr ──┬──> dispatch ──> (blog-sample-release-repo が dev → stg → [prod] をデプロイ)
+#                     └──> tag-release-image (タグが切られた時だけ)
+#
+# - このリポジトリはイメージのビルドとバージョニング (tagpr / CalVer) だけを担当する
+# - デプロイ定義 (ecspresso) と実行は blog-sample-release-repo 側にあり、repository_dispatch で起動する
+# - 通常のマージ:        release_tag が空で dispatch → dev / stg のみデプロイされる
+# - リリース PR のマージ: tagpr がタグを作り、release_tag 付きで dispatch → prod までデプロイされる
+name: Release
+
+on:
+  push:
+    branches: [main]
+
+permissions: {}
+
+concurrency:
+  group: release-main
+  cancel-in-progress: false
+
+env:
+  RELEASE_REPO: gainings/blog-sample-release-repo
+  # リリースリポジトリ側の services/<SERVICE_NAME>/service.yaml に対応する
+  SERVICE_NAME: blog-sample-app
+
+jobs:
+  build:
+    name: build & push image
+    runs-on: ubuntu-latest
+    permissions:
+      id-token: write
+      contents: read
+    outputs:
+      image_tag: ${{ steps.meta.outputs.image_tag }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+      - run: go test ./...
+
+      - id: meta
+        run: echo "image_tag=sha-${GITHUB_SHA}" >> "$GITHUB_OUTPUT"
+
+      - uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ vars.AWS_BUILD_ROLE_ARN }}
+          aws-region: ${{ vars.AWS_REGION }}
+
+      - uses: aws-actions/amazon-ecr-login@v2
+
+      - uses: docker/setup-buildx-action@v3
+
+      - name: Build & push
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          push: true
+          platforms: linux/amd64
+          provenance: false
+          tags: ${{ vars.ECR_REGISTRY }}/${{ vars.ECR_REPOSITORY }}:${{ steps.meta.outputs.image_tag }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+  tagpr:
+    # ビルドが通ったコミットに対してのみ、リリース PR の作成/更新やタグ付けを行う
+    name: tagpr
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      pull-requests: write
+    outputs:
+      tag: ${{ steps.tagpr.outputs.tag }}
+    steps:
+      # GITHUB_TOKEN で作った PR には CI が走らないため、GitHub App のトークンを使う
+      - uses: actions/create-github-app-token@v2
+        id: app-token
+        with:
+          app-id: ${{ vars.GH_APP_ID }}
+          private-key: ${{ secrets.GH_APP_PRIVATE_KEY }}
+      - uses: actions/checkout@v4
+        with:
+          token: ${{ steps.app-token.outputs.token }}
+      - id: tagpr
+        uses: Songmu/tagpr@v1
+        env:
+          GITHUB_TOKEN: ${{ steps.app-token.outputs.token }}
+
+  tag-release-image:
+    # リリース対象のイメージに CalVer タグ (vYYYY.MMDD.N) も付けておく (追跡と rollback 指定用)
+    name: tag image as ${{ needs.tagpr.outputs.tag }}
+    needs: [build, tagpr]
+    if: needs.tagpr.outputs.tag != ''
+    runs-on: ubuntu-latest
+    permissions:
+      id-token: write
+      contents: read
+    steps:
+      - uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ vars.AWS_BUILD_ROLE_ARN }}
+          aws-region: ${{ vars.AWS_REGION }}
+      - name: Add release tag to image
+        env:
+          REPO: ${{ vars.ECR_REPOSITORY }}
+          SRC_TAG: ${{ needs.build.outputs.image_tag }}
+          DST_TAG: ${{ needs.tagpr.outputs.tag }}
+        run: |
+          manifest=$(aws ecr batch-get-image --repository-name "$REPO" \
+            --image-ids imageTag="$SRC_TAG" --query 'images[0].imageManifest' --output text)
+          aws ecr put-image --repository-name "$REPO" --image-tag "$DST_TAG" --image-manifest "$manifest"
+          echo "tagged $REPO:$SRC_TAG as $DST_TAG"
+
+  dispatch:
+    # デプロイはリリースリポジトリに委譲する。release_tag が空なら dev/stg まで、あれば prod まで
+    name: dispatch deploy (${{ needs.tagpr.outputs.tag || 'dev/stg only' }})
+    needs: [build, tagpr]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/create-github-app-token@v2
+        id: app-token
+        with:
+          app-id: ${{ vars.GH_APP_ID }}
+          private-key: ${{ secrets.GH_APP_PRIVATE_KEY }}
+          owner: ${{ github.repository_owner }}
+          repositories: ${{ env.RELEASE_REPO }}
+      - name: Send repository_dispatch
+        env:
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
+          SERVICE: ${{ env.SERVICE_NAME }}
+          IMAGE_TAG: ${{ needs.build.outputs.image_tag }}
+          RELEASE_TAG: ${{ needs.tagpr.outputs.tag }}
+          SOURCE_RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          jq -n \
+            --arg service "$SERVICE" \
+            --arg image_tag "$IMAGE_TAG" \
+            --arg release_tag "$RELEASE_TAG" \
+            --arg sha "$GITHUB_SHA" \
+            --arg source_run_url "$SOURCE_RUN_URL" \
+            '{event_type: "deploy", client_payload: {service: $service, image_tag: $image_tag, release_tag: $release_tag, sha: $sha, source_run_url: $source_run_url}}' \
+            | gh api "repos/${RELEASE_REPO}/dispatches" --input -
+          echo "dispatched deploy of $SERVICE:$IMAGE_TAG (release_tag='$RELEASE_TAG') to $RELEASE_REPO"
