@@ -1,12 +1,10 @@
 # main へのマージを起点にしたリリースパイプライン (アプリ側)。
 #
-#   build ──> release-dev ──> release-stg
-#             (PR → auto-merge → リリース側の Release 成功を待つ)   (同じ手順)
+#   build ──> release-dev : リリースリポジトリの dev/.env を更新する PR (auto-merge → リリース側の Release 成功を待つ)
 #
 # - このリポジトリはイメージ (app と nginx サイドカー) のビルドだけを担当する。デプロイ定義と実行は
 #   blog-sample-release-repo にあり、そこの main に入ったものがリリースされる
-# - dev と stg は別々の PR。dev の適用が成功してから stg の PR を作る
-# - バージョニング (tagpr) と prd 用の PR は tagpr.yml が担当する。tagpr.yml はこのワークフローの成功後に動く
+# - main にマージされるたびに dev が更新される。stg / prd は tagpr.yml がタグ作成時に更新する
 name: Release
 
 on:
@@ -108,37 +106,6 @@ jobs:
             ${{ vars.ECR_REGISTRY }}/${{ vars.ECR_REPOSITORY }}:${{ needs.build.outputs.image_tag }}
             ${{ vars.ECR_REGISTRY }}/${{ vars.ECR_REPOSITORY }}-nginx:${{ needs.build.outputs.image_tag }}
           title: "Release ${{ env.SERVICE_NAME }} ${{ needs.build.outputs.image_tag }} to dev"
-          body: "Source: ${{ github.server_url }}/${{ github.repository }}/commit/${{ github.sha }}"
-          auto_merge: "true"
-          wait_for_release: "true"
-
-  release-stg:
-    # dev が適用できたら、同じイメージで stg の PR を作る
-    name: release to stg
-    needs: [build, release-dev]
-    permissions:
-      contents: read
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/create-github-app-token@v2
-        id: app-token
-        with:
-          app-id: ${{ vars.GH_APP_ID }}
-          private-key: ${{ secrets.GH_APP_PRIVATE_KEY }}
-          owner: ${{ github.repository_owner }}
-          repositories: ${{ env.RELEASE_REPO_NAME }}
-      - uses: ./.github/actions/release-pr
-        with:
-          token: ${{ steps.app-token.outputs.token }}
-          app_slug: ${{ steps.app-token.outputs.app-slug }}
-          release_repo: ${{ github.repository_owner }}/${{ env.RELEASE_REPO_NAME }}
-          service: ${{ env.SERVICE_NAME }}
-          environment: stg
-          images: |
-            ${{ vars.ECR_REGISTRY }}/${{ vars.ECR_REPOSITORY }}:${{ needs.build.outputs.image_tag }}
-            ${{ vars.ECR_REGISTRY }}/${{ vars.ECR_REPOSITORY }}-nginx:${{ needs.build.outputs.image_tag }}
-          title: "Release ${{ env.SERVICE_NAME }} ${{ needs.build.outputs.image_tag }} to stg"
           body: "Source: ${{ github.server_url }}/${{ github.repository }}/commit/${{ github.sha }}"
           auto_merge: "true"
           wait_for_release: "true"
