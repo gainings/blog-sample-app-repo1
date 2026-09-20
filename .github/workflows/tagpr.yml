@@ -67,7 +67,8 @@ jobs:
     # リリース対象のイメージに CalVer タグ (vYYYY.MMDD.N) も付ける (prd はこのタグを参照する)
     name: tag image as ${{ needs.tagpr.outputs.tag }}
     needs: tagpr
-    if: needs.tagpr.outputs.tag != ''
+    # AWS_BUILD_ROLE_ARN が未設定 (AWS なしでフローを確認している) ならスキップ
+    if: needs.tagpr.outputs.tag != '' && vars.AWS_BUILD_ROLE_ARN != ''
     runs-on: ubuntu-latest
     permissions:
       id-token: write
@@ -96,7 +97,7 @@ jobs:
     # prd の image をそのタグに更新する PR を作る。マージは人が行う (= 本番リリース)
     name: propose release to prd (${{ needs.tagpr.outputs.tag }})
     needs: [tagpr, tag-release-image]
-    if: needs.tagpr.outputs.tag != ''
+    if: ${{ !cancelled() && needs.tagpr.result == 'success' && needs.tagpr.outputs.tag != '' && needs.tag-release-image.result != 'failure' }}
     runs-on: ubuntu-latest
     steps:
       - uses: actions/create-github-app-token@v2
