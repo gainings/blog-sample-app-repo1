@@ -1,11 +1,13 @@
-# tagpr によるリリース PR の管理と、タグが切られた時の本番リリース提案。
+# tagpr によるリリース PR の管理と、タグが切られた時の stg / prd リリース。
 #
-#   tagpr ──(タグが切られた時だけ)──> tag-release-image ──> release-prd
+#   tagpr ──(タグが切られた時だけ)──> tag-release-image ──> release-stg ──> release-prd
+#                                                          (auto-merge,     (PR を作るだけ。
+#                                                           適用成功を待つ)   マージは人 = 本番リリース)
 #
-# - Release (build → dev/stg) が成功した後に workflow_run で動く。ビルドが通っていないコミットにはタグを付けない
+# - Release (build → dev) が成功した後に workflow_run で動く。ビルドが通っていないコミットにはタグを付けない
 # - 通常のマージ:        リリース PR (VERSION と CHANGELOG の更新) を作成/更新して終わる
 # - リリース PR のマージ: タグ (CalVer) と GitHub Release を作り、ECR のイメージに同じタグを付け、
-#                        リリースリポジトリの prd/ を更新する PR を作る。その PR のマージが本番リリース
+#                        stg を自動で更新し、prd を更新する PR を作る。その PR のマージが本番リリース
 name: Tagpr
 
 on:
@@ -95,11 +97,43 @@ jobs:
             echo "tagged ${repo}:${SRC_TAG} as ${DST_TAG}"
           done
 
-  release-prd:
-    # prd の .env をそのタグに更新する PR を作る。マージは人が行う (= 本番リリース)
-    name: propose release to prd (${{ needs.tagpr.outputs.tag }})
+  release-stg:
+    # stg の .env をそのタグに更新する PR を作り、auto-merge し、リリース側の Release 実行が成功するまで待つ
+    name: release to stg (${{ needs.tagpr.outputs.tag }})
     needs: [tagpr, tag-release-image]
     if: ${{ !cancelled() && needs.tagpr.result == 'success' && needs.tagpr.outputs.tag != '' && needs.tag-release-image.result != 'failure' }}
+    permissions:
+      contents: read
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/create-github-app-token@v2
+        id: app-token
+        with:
+          app-id: ${{ vars.GH_APP_ID }}
+          private-key: ${{ secrets.GH_APP_PRIVATE_KEY }}
+          owner: ${{ github.repository_owner }}
+          repositories: ${{ env.RELEASE_REPO_NAME }}
+      - uses: ./.github/actions/release-pr
+        with:
+          token: ${{ steps.app-token.outputs.token }}
+          app_slug: ${{ steps.app-token.outputs.app-slug }}
+          release_repo: ${{ github.repository_owner }}/${{ env.RELEASE_REPO_NAME }}
+          service: ${{ env.SERVICE_NAME }}
+          environment: stg
+          images: |
+            ${{ vars.ECR_REGISTRY }}/${{ vars.ECR_REPOSITORY }}:${{ needs.tagpr.outputs.tag }}
+            ${{ vars.ECR_REGISTRY }}/${{ vars.ECR_REPOSITORY }}-nginx:${{ needs.tagpr.outputs.tag }}
+          title: "Release ${{ env.SERVICE_NAME }} ${{ needs.tagpr.outputs.tag }} to stg"
+          body: "Release notes: ${{ github.server_url }}/${{ github.repository }}/releases/tag/${{ needs.tagpr.outputs.tag }}"
+          auto_merge: "true"
+          wait_for_release: "true"
+
+  release-prd:
+    # stg が適用できたら、prd の .env をそのタグに更新する PR を作る。マージは人が行う (= 本番リリース)
+    name: propose release to prd (${{ needs.tagpr.outputs.tag }})
+    needs: [tagpr, release-stg]
+    if: ${{ !cancelled() && needs.release-stg.result == 'success' && needs.tagpr.outputs.tag != '' }}
     permissions:
       contents: read
     runs-on: ubuntu-latest

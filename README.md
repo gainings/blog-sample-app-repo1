@@ -1,7 +1,7 @@
 # blog-sample-app-repo1
 
 ECS (Fargate) へのデプロイフローを解説するブログ記事のサンプルアプリケーションです。
-「dev / stg は main へのマージで自動デプロイ、prd は [tagpr](https://github.com/Songmu/tagpr) が切ったタグでだけデプロイ」というリリースフローを実装しています。
+「main へのマージで dev、[tagpr](https://github.com/Songmu/tagpr) がタグを切ったら stg (自動) と prd (手動マージ)」というリリースフローを実装しています。
 
 このリポジトリは **アプリのコード、イメージのビルド、バージョニング** だけを担当します。
 デプロイ定義とデプロイの実行は [blog-sample-release-repo](https://github.com/gainings/blog-sample-release-repo) にあります。このリポジトリの CI は、そこの定義ファイル内のイメージを書き換える PR を作ることでリリースを進めます。
@@ -15,21 +15,25 @@ flowchart LR
     Build --> Tagpr{tagpr}
     Tagpr -->|通常のマージ| RelPR[リリース PR を作成/更新]
     Tagpr -->|リリース PR のマージ| Tag[タグ vYYYY.MMDD.N を作成]
-    Build --> PR1[release repo に PR<br/>dev/ stg/ の image を更新<br/>auto-merge]
+    Build --> PR1[release repo に PR<br/>dev/.env を更新<br/>auto-merge]
     Tag --> Retag[イメージにリリースタグを付与]
-    Retag --> PR2[release repo に PR<br/>prd/ の image を更新<br/>手動マージ]
-    PR1 --> Rel[blog-sample-release-repo<br/>main → dev → stg]
-    PR2 --> Rel2[blog-sample-release-repo<br/>main → prd]
+    Retag --> PR2[release repo に PR<br/>stg/.env を更新<br/>auto-merge]
+    PR2 --> PR3[release repo に PR<br/>prd/.env を更新<br/>手動マージ]
+    PR1 --> Rel[blog-sample-release-repo<br/>main → dev]
+    PR2 --> Rel2[blog-sample-release-repo<br/>main → stg]
+    PR3 --> Rel3[blog-sample-release-repo<br/>main → prd]
 ```
 
 1. **PR**: `ci.yml` がテストとイメージビルド (push なし) を行う。
 2. **main にマージ**: `release.yml` が起動する。
    - イメージを 1 回だけビルドし、`sha-<commit sha>` タグで ECR に push する。
    - app と nginx サイドカーの 2 つのイメージをビルドする (どちらも同じタグ)。
-   - リリースリポジトリの `dev/.env` を書き換える PR を作って auto-merge し、リリース側の Release 実行が成功するのを待つ。続けて `stg/.env` の PR を同じ手順で作る。**dev → stg** の順序は、この「dev の成功を待ってから stg の PR を作る」ことで担保される。
+   - リリースリポジトリの `dev/.env` を書き換える PR を作って auto-merge し、リリース側の Release 実行が成功するのを待つ。**dev** はこれで更新される。
    - `release.yml` が成功すると `tagpr.yml` が動く。通常のマージならリリース PR (バージョン更新 + CHANGELOG) を作成/更新して終わる。
 3. **リリース PR をマージ**: `release.yml` → `tagpr.yml` が再び動き、tagpr が CalVer タグ (`v2026.0920.0` のような形式) と GitHub Release を作る。
-   - 同じイメージ (app, nginx) へリリースタグを付与し、リリースリポジトリの `prd/.env` をそのタグに書き換える PR を作る。この PR は auto-merge しない。
+   - 同じイメージ (app, nginx) へリリースタグを付与する。
+   - リリースリポジトリの `stg/.env` をそのタグに書き換える PR を作って auto-merge し、適用成功を待つ。**stg** はこれで更新される。
+   - 続けて `prd/.env` をそのタグに書き換える PR を作る。この PR は auto-merge しない。
 4. **prd の PR をマージ**: これが本番リリース。リリースリポジトリ側で prd にデプロイされる。
 5. **ロールバック**: リリースリポジトリで該当コミットを `git revert` した PR をマージする。
 
@@ -54,9 +58,9 @@ flowchart LR
 ├── .tagpr                     # tagpr 設定 (CalVer)
 └── .github/workflows/
     ├── ci.yml                 # PR: test / build
-    ├── release.yml            # main push: build → release repo へ dev の PR → 成功待ち → stg の PR
+    ├── release.yml            # main push: build → release repo へ dev の PR (auto-merge)
     ├── actions/release-pr/    # release repo に PR を作る共通処理 (auto-merge / 完了待ち)
-    └── tagpr.yml              # release.yml 成功後: tagpr → (タグ時) イメージにリリースタグ付与 → release repo へ prd の PR
+    └── tagpr.yml              # release.yml 成功後: tagpr → (タグ時) リリースタグ付与 → stg の PR (auto-merge) → prd の PR (手動)
 ```
 
 ## セットアップ
