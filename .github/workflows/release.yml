@@ -85,6 +85,8 @@ jobs:
     # dev の .env を更新する PR を作り、auto-merge し、リリース側の Release 実行が成功するまで待つ
     name: release to dev
     needs: build
+    permissions:
+      contents: read
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -114,6 +116,8 @@ jobs:
     # dev が適用できたら、同じイメージで stg の PR を作る
     name: release to stg
     needs: [build, release-dev]
+    permissions:
+      contents: read
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
