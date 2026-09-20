@@ -1,5 +1,9 @@
 # Changelog
 
+## [v2026.0920.4](https://github.com/gainings/blog-sample-app-repo1/compare/v2026.0920.3...v2026.0920.4) - 2026-09-20
+
+- Split tag handling out of tagpr.yml into release-tag.yml (on: push: tags) by @gainings in https://github.com/gainings/blog-sample-app-repo1/pull/10
+
 ## [v2026.0920.3](https://github.com/gainings/blog-sample-app-repo1/compare/v2026.0920.2...v2026.0920.3) - 2026-09-20
 
 - Open stg and prd release PRs at the same time; drop the wait-for-release logic by @gainings in https://github.com/gainings/blog-sample-app-repo1/pull/8
