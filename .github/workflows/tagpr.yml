@@ -1,12 +1,9 @@
-# tagpr によるリリース PR の管理と、タグが切られた時の stg / prd リリース。
-#
-#   tagpr ──(タグが切られた時だけ)──> tag-release-image ──┬──> release-stg (PR を作って auto-merge)
-#                                                          └──> release-prd (PR を作るだけ。マージは人 = 本番リリース)
+# tagpr によるリリース PR の管理 (VERSION / CHANGELOG の更新と、リリース PR マージ時のタグ作成)。
 #
 # - Release (build → dev) が成功した後に workflow_run で動く。ビルドが通っていないコミットにはタグを付けない
-# - 通常のマージ:        リリース PR (VERSION と CHANGELOG の更新) を作成/更新して終わる
-# - リリース PR のマージ: タグ (CalVer) と GitHub Release を作り、ECR のイメージに同じタグを付け、
-#                        stg を更新する PR (auto-merge) と prd を更新する PR (手動) を同時に作る。prd の PR のマージが本番リリース
+# - 通常のマージ:        リリース PR を作成/更新して終わる
+# - リリース PR のマージ: タグ (CalVer) と GitHub Release を作る。タグは GitHub App のトークンで push されるので
+#                        release-tag.yml (on: push: tags) が起動し、stg / prd への反映はそちらが行う
 name: Tagpr
 
 on:
@@ -20,11 +17,6 @@ permissions: {}
 concurrency:
   group: tagpr-main
   cancel-in-progress: false
-
-env:
-  RELEASE_REPO_NAME: blog-sample-release-repo
-  # リリースリポジトリ側の services/<SERVICE_NAME>/ に対応する
-  SERVICE_NAME: blog-sample-app
 
 jobs:
   tagpr:
@@ -63,97 +55,3 @@ jobs:
         uses: Songmu/tagpr@v1
         env:
           GITHUB_TOKEN: ${{ steps.app-token.outputs.token }}
-
-  tag-release-image:
-    # リリース対象のイメージに CalVer タグ (vYYYY.MMDD.N) も付ける (prd はこのタグを参照する)
-    name: tag image as ${{ needs.tagpr.outputs.tag }}
-    needs: tagpr
-    # AWS_BUILD_ROLE_ARN が未設定 (AWS なしでフローを確認している) ならスキップ
-    if: needs.tagpr.outputs.tag != '' && vars.AWS_BUILD_ROLE_ARN != ''
-    runs-on: ubuntu-latest
-    permissions:
-      id-token: write
-      contents: read
-    steps:
-      - uses: aws-actions/configure-aws-credentials@v4
-        with:
-          role-to-assume: ${{ vars.AWS_BUILD_ROLE_ARN }}
-          aws-region: ${{ vars.AWS_REGION }}
-      - name: Add release tag to images
-        env:
-          REPOS: ${{ vars.ECR_REPOSITORY }} ${{ vars.ECR_REPOSITORY }}-nginx
-          SRC_TAG: sha-${{ needs.tagpr.outputs.sha }}
-          DST_TAG: ${{ needs.tagpr.outputs.tag }}
-        run: |
-          set -euo pipefail
-          for repo in $REPOS; do
-            manifest=$(aws ecr batch-get-image --repository-name "$repo" \
-              --image-ids imageTag="$SRC_TAG" --query 'images[0].imageManifest' --output text)
-            if [ -z "$manifest" ] || [ "$manifest" = "None" ]; then
-              echo "::error::image ${repo}:${SRC_TAG} not found in ECR"; exit 1
-            fi
-            aws ecr put-image --repository-name "$repo" --image-tag "$DST_TAG" --image-manifest "$manifest"
-            echo "tagged ${repo}:${SRC_TAG} as ${DST_TAG}"
-          done
-
-  release-stg:
-    # stg の .env をそのタグに更新する PR を作り、auto-merge する
-    name: release to stg (${{ needs.tagpr.outputs.tag }})
-    needs: [tagpr, tag-release-image]
-    if: ${{ !cancelled() && needs.tagpr.result == 'success' && needs.tagpr.outputs.tag != '' && needs.tag-release-image.result != 'failure' }}
-    permissions:
-      contents: read
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/create-github-app-token@v2
-        id: app-token
-        with:
-          app-id: ${{ vars.GH_APP_ID }}
-          private-key: ${{ secrets.GH_APP_PRIVATE_KEY }}
-          owner: ${{ github.repository_owner }}
-          repositories: ${{ env.RELEASE_REPO_NAME }}
-      - uses: ./.github/actions/release-pr
-        with:
-          token: ${{ steps.app-token.outputs.token }}
-          app_slug: ${{ steps.app-token.outputs.app-slug }}
-          release_repo: ${{ github.repository_owner }}/${{ env.RELEASE_REPO_NAME }}
-          service: ${{ env.SERVICE_NAME }}
-          environment: stg
-          images: |
-            ${{ vars.ECR_REGISTRY }}/${{ vars.ECR_REPOSITORY }}:${{ needs.tagpr.outputs.tag }}
-            ${{ vars.ECR_REGISTRY }}/${{ vars.ECR_REPOSITORY }}-nginx:${{ needs.tagpr.outputs.tag }}
-          title: "Release ${{ env.SERVICE_NAME }} ${{ needs.tagpr.outputs.tag }} to stg"
-          body: "Release notes: ${{ github.server_url }}/${{ github.repository }}/releases/tag/${{ needs.tagpr.outputs.tag }}"
-          auto_merge: "true"
-
-  release-prd:
-    # prd の .env をそのタグに更新する PR を作る。マージは人が行う (= 本番リリース)
-    name: propose release to prd (${{ needs.tagpr.outputs.tag }})
-    needs: [tagpr, tag-release-image]
-    if: ${{ !cancelled() && needs.tagpr.result == 'success' && needs.tagpr.outputs.tag != '' && needs.tag-release-image.result != 'failure' }}
-    permissions:
-      contents: read
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/create-github-app-token@v2
-        id: app-token
-        with:
-          app-id: ${{ vars.GH_APP_ID }}
-          private-key: ${{ secrets.GH_APP_PRIVATE_KEY }}
-          owner: ${{ github.repository_owner }}
-          repositories: ${{ env.RELEASE_REPO_NAME }}
-      - uses: ./.github/actions/release-pr
-        with:
-          token: ${{ steps.app-token.outputs.token }}
-          app_slug: ${{ steps.app-token.outputs.app-slug }}
-          release_repo: ${{ github.repository_owner }}/${{ env.RELEASE_REPO_NAME }}
-          service: ${{ env.SERVICE_NAME }}
-          environment: prd
-          images: |
-            ${{ vars.ECR_REGISTRY }}/${{ vars.ECR_REPOSITORY }}:${{ needs.tagpr.outputs.tag }}
-            ${{ vars.ECR_REGISTRY }}/${{ vars.ECR_REPOSITORY }}-nginx:${{ needs.tagpr.outputs.tag }}
-          title: "Release ${{ env.SERVICE_NAME }} ${{ needs.tagpr.outputs.tag }} to prd"
-          body: "Release notes: ${{ github.server_url }}/${{ github.repository }}/releases/tag/${{ needs.tagpr.outputs.tag }}\n\nMerging this PR deploys ${{ needs.tagpr.outputs.tag }} to prd."
-          auto_merge: "false"

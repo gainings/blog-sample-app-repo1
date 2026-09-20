@@ -31,19 +31,20 @@ flowchart LR
    - リリースリポジトリの `dev/.env` を書き換える PR を作って auto-merge する。**dev** はこれで更新される。
    - `release.yml` が成功すると `tagpr.yml` が動く。通常のマージならリリース PR (バージョン更新 + CHANGELOG) を作成/更新して終わる。
 3. **リリース PR をマージ**: `release.yml` → `tagpr.yml` が再び動き、tagpr が CalVer タグ (`v2026.0920.0` のような形式) と GitHub Release を作る。
+4. **タグが push される** → `release-tag.yml` が動く。
    - 同じイメージ (app, nginx) へリリースタグを付与する。
    - リリースリポジトリに 2 つの PR を同時に作る。`stg/.env` をそのタグに書き換える PR は auto-merge し、**stg** はこれで更新される。`prd/.env` を書き換える PR は auto-merge しない。
-4. **prd の PR をマージ**: これが本番リリース。リリースリポジトリ側で prd にデプロイされる。
-5. **ロールバック**: リリースリポジトリで該当コミットを `git revert` した PR をマージする。
+5. **prd の PR をマージ**: これが本番リリース。リリースリポジトリ側で prd にデプロイされる。
+6. **ロールバック**: リリースリポジトリで該当コミットを `git revert` した PR をマージする。
 
 ### 設計上のポイント
 
-- **ビルドとバージョニングの分離**: イメージのビルド (`release.yml`) と、リリース PR やタグの管理 (`tagpr.yml`) を別のワークフローにしている。`tagpr.yml` は `release.yml` の成功後にだけ動くので、ビルドの通っていないコミットにタグは付かない。
+- **ビルド、バージョニング、タグ後処理の分離**: イメージのビルド (`release.yml`)、リリース PR とタグの管理 (`tagpr.yml`)、タグが切られた後の処理 (`release-tag.yml`) を別のワークフローにしている。`tagpr.yml` は `release.yml` の成功後にだけ動くので、ビルドの通っていないコミットにタグは付かない。`release-tag.yml` は `on: push: tags` なので、手でタグを push しても同じ経路でリリースできる。
 - **複数イメージ (サイドカー)**: 1 つのタスクに app と nginx の 2 イメージがある。リリースリポジトリの `.env` には `IMAGE=` と `IMAGE_NGINX=` の 2 行があり、`set-image.sh` に 2 つのイメージを渡すと、それぞれ同じリポジトリを指す行だけが書き換わる。サイドカーが別リポジトリ由来なら、そちらの CI が自分のイメージだけを渡せばよい。
 - **ビルドとデプロイの分離**: 全環境で同じイメージを使うので、「stg で確認したものが prd に出る」ことが保証される。
 - **リポジトリの分離**: アプリ側は ECR への push 権限しか持たず、ECS への権限はリリースリポジトリ側にだけある。リリースリポジトリの main が「今リリースされているもの」で、履歴がそのままリリース履歴になる。
 - **CalVer**: リリースは「いつ出したか」で識別する。tagpr の `calendarVersioning = YYYY.0M0D.MICRO` により `v2026.0920.0` のようなタグになり、同日 2 回目は `v2026.0920.1` になる。
-- **GitHub App トークン**: tagpr が `GITHUB_TOKEN` で作った PR には CI が走らず、`GITHUB_TOKEN` では他リポジトリに PR も作れない。そのため GitHub App のインストールトークンをワークフロー内で発行して使う。
+- **GitHub App トークン**: `GITHUB_TOKEN` で作った PR には CI が走らず、`GITHUB_TOKEN` で push したタグは `on: push: tags` のワークフローを起動せず、他リポジトリに PR も作れない。そのため GitHub App のインストールトークンをワークフロー内で発行して使う。tagpr がこのトークンでタグを push するから `release-tag.yml` が起動する。
 - **バージョンの埋め込み**: tagpr が更新する `VERSION` を `go:embed` でバイナリに含め、`/` で返す。どのバージョンが動いているかを HTTP で確認できる。
 
 ## ディレクトリ構成
@@ -59,7 +60,8 @@ flowchart LR
     ├── ci.yml                 # PR: test / build
     ├── release.yml            # main push: build → release repo へ dev の PR (auto-merge)
     ├── actions/release-pr/    # release repo に PR を作る共通処理 (auto-merge)
-    └── tagpr.yml              # release.yml 成功後: tagpr → (タグ時) リリースタグ付与 → stg の PR (auto-merge) → prd の PR (手動)
+    ├── tagpr.yml              # release.yml 成功後: tagpr (リリース PR の作成/更新、マージ時にタグ作成)
+    └── release-tag.yml        # タグ push: イメージにリリースタグ付与 → stg の PR (auto-merge) と prd の PR (手動)
 ```
 
 ## セットアップ
