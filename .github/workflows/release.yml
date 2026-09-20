@@ -42,12 +42,15 @@ jobs:
       - id: meta
         run: echo "image_tag=sha-${GITHUB_SHA}" >> "$GITHUB_OUTPUT"
 
+      # AWS_BUILD_ROLE_ARN が未設定なら AWS には接続せず、ビルドだけして push を省略する (フローの確認用)
       - uses: aws-actions/configure-aws-credentials@v4
+        if: vars.AWS_BUILD_ROLE_ARN != ''
         with:
           role-to-assume: ${{ vars.AWS_BUILD_ROLE_ARN }}
           aws-region: ${{ vars.AWS_REGION }}
 
       - uses: aws-actions/amazon-ecr-login@v2
+        if: vars.AWS_BUILD_ROLE_ARN != ''
 
       - uses: docker/setup-buildx-action@v3
 
@@ -55,12 +58,15 @@ jobs:
         uses: docker/build-push-action@v6
         with:
           context: .
-          push: true
+          push: ${{ vars.AWS_BUILD_ROLE_ARN != '' }}
           platforms: linux/amd64
           provenance: false
           tags: ${{ vars.ECR_REGISTRY }}/${{ vars.ECR_REPOSITORY }}:${{ steps.meta.outputs.image_tag }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
+
+      - if: vars.AWS_BUILD_ROLE_ARN == ''
+        run: echo "::warning::AWS_BUILD_ROLE_ARN is not set. Image ${{ vars.ECR_REGISTRY }}/${{ vars.ECR_REPOSITORY }}:${{ steps.meta.outputs.image_tag }} was built but NOT pushed."
 
   release-dev-stg:
     # dev / stg の image を更新する PR をリリースリポジトリに作り、auto-merge する

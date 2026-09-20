@@ -32,7 +32,7 @@ func newMux() *http.ServeMux {
 	mux.HandleFunc("GET /", func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		_ = json.NewEncoder(w).Encode(map[string]string{
-			"message": "hello from blog-sample-app",
+			"message": "hello from blog-sample-app (release flow demo)",
 			"env":     envOr("APP_ENV", "local"),
 			"version": version(),
 		})
