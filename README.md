@@ -25,15 +25,16 @@ flowchart LR
 1. **PR**: `ci.yml` がテストとイメージビルド (push なし) を行う。
 2. **main にマージ**: `release.yml` が起動する。
    - イメージを 1 回だけビルドし、`sha-<commit sha>` タグで ECR に push する。
-   - リリースリポジトリの `dev/` と `stg/` の定義内 image をそのタグに書き換える PR を作り、auto-merge する。マージされると **dev → stg** の順にデプロイされる。
-   - tagpr が動く。通常のマージならリリース PR (バージョン更新 + CHANGELOG) を作成/更新して終わる。
-3. **リリース PR をマージ**: 同じ `release.yml` が再び動き、tagpr が CalVer タグ (`v2026.0920.0` のような形式) と GitHub Release を作る。
-   - 同じイメージへリリースタグを付与し、リリースリポジトリの `prd/` の image をそのタグに書き換える PR を作る。この PR は auto-merge しない。
+   - リリースリポジトリの `dev/.env` と `stg/.env` の `IMAGE` をそのタグに書き換える PR を作り、auto-merge する。マージされると **dev → stg** の順にデプロイされる。
+   - `release.yml` が成功すると `tagpr.yml` が動く。通常のマージならリリース PR (バージョン更新 + CHANGELOG) を作成/更新して終わる。
+3. **リリース PR をマージ**: `release.yml` → `tagpr.yml` が再び動き、tagpr が CalVer タグ (`v2026.0920.0` のような形式) と GitHub Release を作る。
+   - 同じイメージへリリースタグを付与し、リリースリポジトリの `prd/.env` の `IMAGE` をそのタグに書き換える PR を作る。この PR は auto-merge しない。
 4. **prd の PR をマージ**: これが本番リリース。リリースリポジトリ側で prd にデプロイされる。
 5. **ロールバック**: リリースリポジトリで該当コミットを `git revert` した PR をマージする。
 
 ### 設計上のポイント
 
+- **ビルドとバージョニングの分離**: イメージのビルド (`release.yml`) と、リリース PR やタグの管理 (`tagpr.yml`) を別のワークフローにしている。`tagpr.yml` は `release.yml` の成功後にだけ動くので、ビルドの通っていないコミットにタグは付かない。
 - **ビルドとデプロイの分離**: 全環境で同じイメージを使うので、「stg で確認したものが prd に出る」ことが保証される。
 - **リポジトリの分離**: アプリ側は ECR への push 権限しか持たず、ECS への権限はリリースリポジトリ側にだけある。リリースリポジトリの main が「今リリースされているもの」で、履歴がそのままリリース履歴になる。
 - **CalVer**: リリースは「いつ出したか」で識別する。tagpr の `calendarVersioning = YYYY.0M0D.MICRO` により `v2026.0920.0` のようなタグになり、同日 2 回目は `v2026.0920.1` になる。
@@ -50,7 +51,8 @@ flowchart LR
 ├── .tagpr                     # tagpr 設定 (CalVer)
 └── .github/workflows/
     ├── ci.yml                 # PR: test / build
-    └── release.yml            # main push: build → tagpr → release repo への PR (+ イメージへのリリースタグ付与)
+    ├── release.yml            # main push: build → release repo へ dev/stg の PR (auto-merge)
+    └── tagpr.yml              # release.yml 成功後: tagpr → (タグ時) イメージにリリースタグ付与 → release repo へ prd の PR
 ```
 
 ## セットアップ

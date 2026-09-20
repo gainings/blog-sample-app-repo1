@@ -1,0 +1,133 @@
+# tagpr によるリリース PR の管理と、タグが切られた時の本番リリース提案。
+#
+#   tagpr ──(タグが切られた時だけ)──> tag-release-image ──> release-prd
+#
+# - Release (build → dev/stg) が成功した後に workflow_run で動く。ビルドが通っていないコミットにはタグを付けない
+# - 通常のマージ:        リリース PR (VERSION と CHANGELOG の更新) を作成/更新して終わる
+# - リリース PR のマージ: タグ (CalVer) と GitHub Release を作り、ECR のイメージに同じタグを付け、
+#                        リリースリポジトリの prd/ を更新する PR を作る。その PR のマージが本番リリース
+name: Tagpr
+
+on:
+  workflow_run:
+    workflows: [Release]
+    types: [completed]
+    branches: [main]
+
+permissions: {}
+
+concurrency:
+  group: tagpr-main
+  cancel-in-progress: false
+
+env:
+  RELEASE_REPO_NAME: blog-sample-release-repo
+  # リリースリポジトリ側の services/<SERVICE_NAME>/ に対応する
+  SERVICE_NAME: blog-sample-app
+
+jobs:
+  tagpr:
+    name: tagpr
+    if: github.event.workflow_run.conclusion == 'success'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      pull-requests: write
+    outputs:
+      tag: ${{ steps.tagpr.outputs.tag }}
+      sha: ${{ steps.head.outputs.sha }}
+    steps:
+      # GITHUB_TOKEN で作った PR には CI が走らないため、GitHub App のトークンを使う
+      - uses: actions/create-github-app-token@v2
+        id: app-token
+        with:
+          app-id: ${{ vars.GH_APP_ID }}
+          private-key: ${{ secrets.GH_APP_PRIVATE_KEY }}
+      - uses: actions/checkout@v4
+        with:
+          ref: main
+          token: ${{ steps.app-token.outputs.token }}
+      - name: Ensure main is still the built commit
+        id: head
+        env:
+          BUILT: ${{ github.event.workflow_run.head_sha }}
+        run: |
+          sha=$(git rev-parse HEAD)
+          echo "sha=${sha}" >> "$GITHUB_OUTPUT"
+          if [ "$sha" != "$BUILT" ]; then
+            echo "::notice::main moved on (${sha:0:7}) since the built commit (${BUILT:0:7}); the next Release run will handle it"
+            exit 1
+          fi
+      - id: tagpr
+        uses: Songmu/tagpr@v1
+        env:
+          GITHUB_TOKEN: ${{ steps.app-token.outputs.token }}
+
+  tag-release-image:
+    # リリース対象のイメージに CalVer タグ (vYYYY.MMDD.N) も付ける (prd はこのタグを参照する)
+    name: tag image as ${{ needs.tagpr.outputs.tag }}
+    needs: tagpr
+    if: needs.tagpr.outputs.tag != ''
+    runs-on: ubuntu-latest
+    permissions:
+      id-token: write
+      contents: read
+    steps:
+      - uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ vars.AWS_BUILD_ROLE_ARN }}
+          aws-region: ${{ vars.AWS_REGION }}
+      - name: Add release tag to image
+        env:
+          REPO: ${{ vars.ECR_REPOSITORY }}
+          SRC_TAG: sha-${{ needs.tagpr.outputs.sha }}
+          DST_TAG: ${{ needs.tagpr.outputs.tag }}
+        run: |
+          set -euo pipefail
+          manifest=$(aws ecr batch-get-image --repository-name "$REPO" \
+            --image-ids imageTag="$SRC_TAG" --query 'images[0].imageManifest' --output text)
+          if [ -z "$manifest" ] || [ "$manifest" = "None" ]; then
+            echo "::error::image ${REPO}:${SRC_TAG} not found in ECR"; exit 1
+          fi
+          aws ecr put-image --repository-name "$REPO" --image-tag "$DST_TAG" --image-manifest "$manifest"
+          echo "tagged $REPO:$SRC_TAG as $DST_TAG"
+
+  release-prd:
+    # prd の image をそのタグに更新する PR を作る。マージは人が行う (= 本番リリース)
+    name: propose release to prd (${{ needs.tagpr.outputs.tag }})
+    needs: [tagpr, tag-release-image]
+    if: needs.tagpr.outputs.tag != ''
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/create-github-app-token@v2
+        id: app-token
+        with:
+          app-id: ${{ vars.GH_APP_ID }}
+          private-key: ${{ secrets.GH_APP_PRIVATE_KEY }}
+          owner: ${{ github.repository_owner }}
+          repositories: ${{ env.RELEASE_REPO_NAME }}
+      - uses: actions/checkout@v4
+        with:
+          repository: ${{ github.repository_owner }}/${{ env.RELEASE_REPO_NAME }}
+          token: ${{ steps.app-token.outputs.token }}
+      - name: Update image and open PR
+        env:
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
+          BOT: ${{ steps.app-token.outputs.app-slug }}[bot]
+          TAG: ${{ needs.tagpr.outputs.tag }}
+          IMAGE: ${{ vars.ECR_REGISTRY }}/${{ vars.ECR_REPOSITORY }}:${{ needs.tagpr.outputs.tag }}
+          RELEASE_URL: ${{ github.server_url }}/${{ github.repository }}/releases/tag/${{ needs.tagpr.outputs.tag }}
+        run: |
+          set -euo pipefail
+          scripts/set-image.sh "$SERVICE_NAME" prd "$IMAGE"
+          if git diff --quiet; then echo "prd already at $IMAGE"; exit 0; fi
+
+          branch="release/${SERVICE_NAME}/prd/${TAG}"
+          git config user.name "$BOT"
+          git config user.email "${BOT}@users.noreply.github.com"
+          git checkout -b "$branch"
+          git commit -am "Release ${SERVICE_NAME} ${TAG} to prd"
+          git push -u origin "$branch"
+          body=$(printf 'Image: `%s`\nRelease notes: %s\n\nMerging this PR deploys %s to prd.' "$IMAGE" "$RELEASE_URL" "$TAG")
+          gh pr create --base main --head "$branch" \
+            --title "Release ${SERVICE_NAME} ${TAG} to prd" --body "$body"
