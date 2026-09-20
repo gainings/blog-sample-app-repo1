@@ -4,7 +4,7 @@ ECS (Fargate) へのデプロイフローを解説するブログ記事のサン
 「dev / stg は main へのマージで自動デプロイ、prd は [tagpr](https://github.com/Songmu/tagpr) が切ったタグでだけデプロイ」というリリースフローを実装しています。
 
 このリポジトリは **アプリのコード、イメージのビルド、バージョニング** だけを担当します。
-デプロイ定義 (ecspresso) とデプロイの実行は [blog-sample-release-repo](https://github.com/gainings/blog-sample-release-repo) にあり、このリポジトリから `repository_dispatch` で起動します。
+デプロイ定義とデプロイの実行は [blog-sample-release-repo](https://github.com/gainings/blog-sample-release-repo) にあります。このリポジトリの CI は、そこの定義ファイル内のイメージを書き換える PR を作ることでリリースを進めます。
 
 ## リリースフロー
 
@@ -15,29 +15,29 @@ flowchart LR
     Build --> Tagpr{tagpr}
     Tagpr -->|通常のマージ| RelPR[リリース PR を作成/更新]
     Tagpr -->|リリース PR のマージ| Tag[タグ vYYYY.MMDD.N を作成]
-    RelPR --> Dispatch[repository_dispatch<br/>release_tag なし]
-    Tag --> Dispatch2[repository_dispatch<br/>release_tag あり]
+    Build --> PR1[release repo に PR<br/>dev/ stg/ の image を更新<br/>auto-merge]
     Tag --> Retag[イメージにリリースタグを付与]
-    Dispatch --> Rel[blog-sample-release-repo<br/>dev → stg]
-    Dispatch2 --> Rel2[blog-sample-release-repo<br/>dev → stg → prd]
+    Retag --> PR2[release repo に PR<br/>prd/ の image を更新<br/>手動マージ]
+    PR1 --> Rel[blog-sample-release-repo<br/>main → dev → stg]
+    PR2 --> Rel2[blog-sample-release-repo<br/>main → prd]
 ```
 
 1. **PR**: `ci.yml` がテストとイメージビルド (push なし) を行う。
 2. **main にマージ**: `release.yml` が起動する。
    - イメージを 1 回だけビルドし、`sha-<commit sha>` タグで ECR に push する。
-   - tagpr が動く。通常のマージならリリース PR (バージョン更新 + CHANGELOG) を作成/更新する。
-   - リリースリポジトリへ `repository_dispatch` を送る (payload: `service`, `image_tag`, `release_tag`)。`release_tag` は空なので **dev → stg** までデプロイされる。
+   - リリースリポジトリの `dev/` と `stg/` の定義内 image をそのタグに書き換える PR を作り、auto-merge する。マージされると **dev → stg** の順にデプロイされる。
+   - tagpr が動く。通常のマージならリリース PR (バージョン更新 + CHANGELOG) を作成/更新して終わる。
 3. **リリース PR をマージ**: 同じ `release.yml` が再び動き、tagpr が CalVer タグ (`v2026.0920.0` のような形式) と GitHub Release を作る。
-   - `release_tag` 付きで `repository_dispatch` を送り、**dev → stg → prd** までデプロイされる。イメージは再ビルドせず、同じ `sha-<commit>` を使う。
-   - 同じイメージへリリースタグも付与する。
-4. **ロールバック**: リリースリポジトリの `rollback.yml` を手動実行する。
+   - 同じイメージへリリースタグを付与し、リリースリポジトリの `prd/` の image をそのタグに書き換える PR を作る。この PR は auto-merge しない。
+4. **prd の PR をマージ**: これが本番リリース。リリースリポジトリ側で prd にデプロイされる。
+5. **ロールバック**: リリースリポジトリで該当コミットを `git revert` した PR をマージする。
 
 ### 設計上のポイント
 
 - **ビルドとデプロイの分離**: 全環境で同じイメージを使うので、「stg で確認したものが prd に出る」ことが保証される。
-- **リポジトリの分離**: アプリ側は ECR への push 権限しか持たず、ECS への権限はリリースリポジトリ側にだけある。デプロイ定義の変更はアプリの変更と独立にレビューできる。
+- **リポジトリの分離**: アプリ側は ECR への push 権限しか持たず、ECS への権限はリリースリポジトリ側にだけある。リリースリポジトリの main が「今リリースされているもの」で、履歴がそのままリリース履歴になる。
 - **CalVer**: リリースは「いつ出したか」で識別する。tagpr の `calendarVersioning = YYYY.0M0D.MICRO` により `v2026.0920.0` のようなタグになり、同日 2 回目は `v2026.0920.1` になる。
-- **GitHub App トークン**: tagpr が `GITHUB_TOKEN` で作った PR には CI が走らず、`GITHUB_TOKEN` では他リポジトリへ `repository_dispatch` も送れない。そのため GitHub App のインストールトークンをワークフロー内で発行して使う。
+- **GitHub App トークン**: tagpr が `GITHUB_TOKEN` で作った PR には CI が走らず、`GITHUB_TOKEN` では他リポジトリに PR も作れない。そのため GitHub App のインストールトークンをワークフロー内で発行して使う。
 - **バージョンの埋め込み**: tagpr が更新する `VERSION` を `go:embed` でバイナリに含め、`/` で返す。どのバージョンが動いているかを HTTP で確認できる。
 
 ## ディレクトリ構成
@@ -50,7 +50,7 @@ flowchart LR
 ├── .tagpr                     # tagpr 設定 (CalVer)
 └── .github/workflows/
     ├── ci.yml                 # PR: test / build
-    └── release.yml            # main push: build → tagpr → dispatch (+ イメージへのリリースタグ付与)
+    └── release.yml            # main push: build → tagpr → release repo への PR (+ イメージへのリリースタグ付与)
 ```
 
 ## セットアップ
@@ -72,7 +72,7 @@ flowchart LR
 | variable | `GH_APP_ID` | `123456` |
 | secret | `GH_APP_PRIVATE_KEY` | GitHub App の秘密鍵 (PEM) |
 
-デプロイ先 (ECS) に関する設定はすべてリリースリポジトリ側の `services/blog-sample-app/` にあります。
+デプロイ先 (ECS) に関する設定はすべてリリースリポジトリ側の `services/blog-sample-app/{dev,stg,prd}/` にあります。
 
 ### 3. バージョンの決まり方
 

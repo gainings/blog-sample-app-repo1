@@ -1,12 +1,12 @@
 # main へのマージを起点にしたリリースパイプライン (アプリ側)。
 #
-#   build ──> tagpr ──┬──> dispatch ──> (blog-sample-release-repo が dev → stg → [prd] をデプロイ)
-#                     └──> tag-release-image (タグが切られた時だけ)
+#   build ──> tagpr ──┬──> release-dev-stg : リリースリポジトリの dev/ stg/ の image を更新する PR (auto-merge)
+#                     └──> tag-release-image ──> release-prd : タグが切られた時だけ prd/ の image を更新する PR (手動マージ)
 #
 # - このリポジトリはイメージのビルドとバージョニング (tagpr / CalVer) だけを担当する
-# - デプロイ定義 (ecspresso) と実行は blog-sample-release-repo 側にあり、repository_dispatch で起動する
-# - 通常のマージ:        release_tag が空で dispatch → dev / stg のみデプロイされる
-# - リリース PR のマージ: tagpr がタグを作り、release_tag 付きで dispatch → prd までデプロイされる
+# - デプロイ定義と実行は blog-sample-release-repo にあり、そこの main に入ったものがリリースされる
+# - 通常のマージ:        dev / stg が新しいイメージになる
+# - リリース PR のマージ: tagpr がタグを作り、prd を更新する PR ができる。それをマージした時が本番リリース
 name: Release
 
 on:
@@ -20,8 +20,8 @@ concurrency:
   cancel-in-progress: false
 
 env:
-  RELEASE_REPO: gainings/blog-sample-release-repo
-  # リリースリポジトリ側の services/<SERVICE_NAME>/service.yaml に対応する
+  RELEASE_REPO_NAME: blog-sample-release-repo
+  # リリースリポジトリ側の services/<SERVICE_NAME>/ に対応する
   SERVICE_NAME: blog-sample-app
 
 jobs:
@@ -114,10 +114,10 @@ jobs:
           aws ecr put-image --repository-name "$REPO" --image-tag "$DST_TAG" --image-manifest "$manifest"
           echo "tagged $REPO:$SRC_TAG as $DST_TAG"
 
-  dispatch:
-    # デプロイはリリースリポジトリに委譲する。release_tag が空なら dev/stg まで、あれば prd まで
-    name: dispatch deploy (${{ needs.tagpr.outputs.tag || 'dev/stg only' }})
-    needs: [build, tagpr]
+  release-dev-stg:
+    # dev / stg の image を更新する PR をリリースリポジトリに作り、auto-merge する
+    name: release to dev, stg
+    needs: build
     runs-on: ubuntu-latest
     steps:
       - uses: actions/create-github-app-token@v2
@@ -126,21 +126,72 @@ jobs:
           app-id: ${{ vars.GH_APP_ID }}
           private-key: ${{ secrets.GH_APP_PRIVATE_KEY }}
           owner: ${{ github.repository_owner }}
-          repositories: ${{ env.RELEASE_REPO }}
-      - name: Send repository_dispatch
+          repositories: ${{ env.RELEASE_REPO_NAME }}
+      - uses: actions/checkout@v4
+        with:
+          repository: ${{ github.repository_owner }}/${{ env.RELEASE_REPO_NAME }}
+          token: ${{ steps.app-token.outputs.token }}
+      - name: Update image and open PR
         env:
           GH_TOKEN: ${{ steps.app-token.outputs.token }}
-          SERVICE: ${{ env.SERVICE_NAME }}
+          BOT: ${{ steps.app-token.outputs.app-slug }}[bot]
+          IMAGE: ${{ vars.ECR_REGISTRY }}/${{ vars.ECR_REPOSITORY }}:${{ needs.build.outputs.image_tag }}
           IMAGE_TAG: ${{ needs.build.outputs.image_tag }}
-          RELEASE_TAG: ${{ needs.tagpr.outputs.tag }}
-          SOURCE_RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+          SOURCE: ${{ github.server_url }}/${{ github.repository }}/commit/${{ github.sha }}
         run: |
-          jq -n \
-            --arg service "$SERVICE" \
-            --arg image_tag "$IMAGE_TAG" \
-            --arg release_tag "$RELEASE_TAG" \
-            --arg sha "$GITHUB_SHA" \
-            --arg source_run_url "$SOURCE_RUN_URL" \
-            '{event_type: "deploy", client_payload: {service: $service, image_tag: $image_tag, release_tag: $release_tag, sha: $sha, source_run_url: $source_run_url}}' \
-            | gh api "repos/${RELEASE_REPO}/dispatches" --input -
-          echo "dispatched deploy of $SERVICE:$IMAGE_TAG (release_tag='$RELEASE_TAG') to $RELEASE_REPO"
+          set -euo pipefail
+          for env in dev stg; do scripts/set-image.sh "$SERVICE_NAME" "$env" "$IMAGE"; done
+          if git diff --quiet; then echo "dev / stg already at $IMAGE"; exit 0; fi
+
+          branch="release/${SERVICE_NAME}/${IMAGE_TAG}"
+          git config user.name "$BOT"
+          git config user.email "${BOT}@users.noreply.github.com"
+          git checkout -b "$branch"
+          git commit -am "Release ${SERVICE_NAME} ${IMAGE_TAG} to dev, stg"
+          git push -u origin "$branch"
+          body=$(printf 'Image: `%s`\nSource: %s\n\nAuto-merged by the Release workflow of %s.' "$IMAGE" "$SOURCE" "$GITHUB_REPOSITORY")
+          gh pr create --base main --head "$branch" \
+            --title "Release ${SERVICE_NAME} ${IMAGE_TAG} to dev, stg" --body "$body"
+          # Allow auto-merge が有効なら CI 通過後にマージ、無効なら即マージ
+          gh pr merge "$branch" --squash --auto --delete-branch \
+            || gh pr merge "$branch" --squash --delete-branch
+
+  release-prd:
+    # タグが切られた時だけ、prd の image をそのタグに更新する PR を作る。マージは人が行う (= 本番リリース)
+    name: propose release to prd (${{ needs.tagpr.outputs.tag }})
+    needs: [tagpr, tag-release-image]
+    if: needs.tagpr.outputs.tag != ''
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/create-github-app-token@v2
+        id: app-token
+        with:
+          app-id: ${{ vars.GH_APP_ID }}
+          private-key: ${{ secrets.GH_APP_PRIVATE_KEY }}
+          owner: ${{ github.repository_owner }}
+          repositories: ${{ env.RELEASE_REPO_NAME }}
+      - uses: actions/checkout@v4
+        with:
+          repository: ${{ github.repository_owner }}/${{ env.RELEASE_REPO_NAME }}
+          token: ${{ steps.app-token.outputs.token }}
+      - name: Update image and open PR
+        env:
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
+          BOT: ${{ steps.app-token.outputs.app-slug }}[bot]
+          TAG: ${{ needs.tagpr.outputs.tag }}
+          IMAGE: ${{ vars.ECR_REGISTRY }}/${{ vars.ECR_REPOSITORY }}:${{ needs.tagpr.outputs.tag }}
+          RELEASE_URL: ${{ github.server_url }}/${{ github.repository }}/releases/tag/${{ needs.tagpr.outputs.tag }}
+        run: |
+          set -euo pipefail
+          scripts/set-image.sh "$SERVICE_NAME" prd "$IMAGE"
+          if git diff --quiet; then echo "prd already at $IMAGE"; exit 0; fi
+
+          branch="release/${SERVICE_NAME}/prd/${TAG}"
+          git config user.name "$BOT"
+          git config user.email "${BOT}@users.noreply.github.com"
+          git checkout -b "$branch"
+          git commit -am "Release ${SERVICE_NAME} ${TAG} to prd"
+          git push -u origin "$branch"
+          body=$(printf 'Image: `%s`\nRelease notes: %s\n\nMerging this PR deploys %s to prd.' "$IMAGE" "$RELEASE_URL" "$TAG")
+          gh pr create --base main --head "$branch" \
+            --title "Release ${SERVICE_NAME} ${TAG} to prd" --body "$body"
