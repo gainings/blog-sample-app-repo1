@@ -1,7 +1,7 @@
 # blog-sample-app-repo1
 
 ECS (Fargate) へのデプロイフローを解説するブログ記事のサンプルアプリケーションです。
-「dev / stg は main へのマージで自動デプロイ、prod は [tagpr](https://github.com/Songmu/tagpr) が切ったタグでだけデプロイ」というリリースフローを実装しています。
+「dev / stg は main へのマージで自動デプロイ、prd は [tagpr](https://github.com/Songmu/tagpr) が切ったタグでだけデプロイ」というリリースフローを実装しています。
 
 このリポジトリは **アプリのコード、イメージのビルド、バージョニング** だけを担当します。
 デプロイ定義 (ecspresso) とデプロイの実行は [blog-sample-release-repo](https://github.com/gainings/blog-sample-release-repo) にあり、このリポジトリから `repository_dispatch` で起動します。
@@ -19,7 +19,7 @@ flowchart LR
     Tag --> Dispatch2[repository_dispatch<br/>release_tag あり]
     Tag --> Retag[イメージにリリースタグを付与]
     Dispatch --> Rel[blog-sample-release-repo<br/>dev → stg]
-    Dispatch2 --> Rel2[blog-sample-release-repo<br/>dev → stg → prod]
+    Dispatch2 --> Rel2[blog-sample-release-repo<br/>dev → stg → prd]
 ```
 
 1. **PR**: `ci.yml` がテストとイメージビルド (push なし) を行う。
@@ -28,13 +28,13 @@ flowchart LR
    - tagpr が動く。通常のマージならリリース PR (バージョン更新 + CHANGELOG) を作成/更新する。
    - リリースリポジトリへ `repository_dispatch` を送る (payload: `service`, `image_tag`, `release_tag`)。`release_tag` は空なので **dev → stg** までデプロイされる。
 3. **リリース PR をマージ**: 同じ `release.yml` が再び動き、tagpr が CalVer タグ (`v2026.0920.0` のような形式) と GitHub Release を作る。
-   - `release_tag` 付きで `repository_dispatch` を送り、**dev → stg → prod** までデプロイされる。イメージは再ビルドせず、同じ `sha-<commit>` を使う。
+   - `release_tag` 付きで `repository_dispatch` を送り、**dev → stg → prd** までデプロイされる。イメージは再ビルドせず、同じ `sha-<commit>` を使う。
    - 同じイメージへリリースタグも付与する。
 4. **ロールバック**: リリースリポジトリの `rollback.yml` を手動実行する。
 
 ### 設計上のポイント
 
-- **ビルドとデプロイの分離**: 全環境で同じイメージを使うので、「stg で確認したものが prod に出る」ことが保証される。
+- **ビルドとデプロイの分離**: 全環境で同じイメージを使うので、「stg で確認したものが prd に出る」ことが保証される。
 - **リポジトリの分離**: アプリ側は ECR への push 権限しか持たず、ECS への権限はリリースリポジトリ側にだけある。デプロイ定義の変更はアプリの変更と独立にレビューできる。
 - **CalVer**: リリースは「いつ出したか」で識別する。tagpr の `calendarVersioning = YYYY.0M0D.MICRO` により `v2026.0920.0` のようなタグになり、同日 2 回目は `v2026.0920.1` になる。
 - **GitHub App トークン**: tagpr が `GITHUB_TOKEN` で作った PR には CI が走らず、`GITHUB_TOKEN` では他リポジトリへ `repository_dispatch` も送れない。そのため GitHub App のインストールトークンをワークフロー内で発行して使う。

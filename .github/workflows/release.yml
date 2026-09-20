@@ -1,12 +1,12 @@
 # main へのマージを起点にしたリリースパイプライン (アプリ側)。
 #
-#   build ──> tagpr ──┬──> dispatch ──> (blog-sample-release-repo が dev → stg → [prod] をデプロイ)
+#   build ──> tagpr ──┬──> dispatch ──> (blog-sample-release-repo が dev → stg → [prd] をデプロイ)
 #                     └──> tag-release-image (タグが切られた時だけ)
 #
 # - このリポジトリはイメージのビルドとバージョニング (tagpr / CalVer) だけを担当する
 # - デプロイ定義 (ecspresso) と実行は blog-sample-release-repo 側にあり、repository_dispatch で起動する
 # - 通常のマージ:        release_tag が空で dispatch → dev / stg のみデプロイされる
-# - リリース PR のマージ: tagpr がタグを作り、release_tag 付きで dispatch → prod までデプロイされる
+# - リリース PR のマージ: tagpr がタグを作り、release_tag 付きで dispatch → prd までデプロイされる
 name: Release
 
 on:
@@ -115,7 +115,7 @@ jobs:
           echo "tagged $REPO:$SRC_TAG as $DST_TAG"
 
   dispatch:
-    # デプロイはリリースリポジトリに委譲する。release_tag が空なら dev/stg まで、あれば prod まで
+    # デプロイはリリースリポジトリに委譲する。release_tag が空なら dev/stg まで、あれば prd まで
     name: dispatch deploy (${{ needs.tagpr.outputs.tag || 'dev/stg only' }})
     needs: [build, tagpr]
     runs-on: ubuntu-latest
