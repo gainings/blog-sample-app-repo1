@@ -1,13 +1,12 @@
 # tagpr によるリリース PR の管理と、タグが切られた時の stg / prd リリース。
 #
-#   tagpr ──(タグが切られた時だけ)──> tag-release-image ──> release-stg ──> release-prd
-#                                                          (auto-merge,     (PR を作るだけ。
-#                                                           適用成功を待つ)   マージは人 = 本番リリース)
+#   tagpr ──(タグが切られた時だけ)──> tag-release-image ──┬──> release-stg (PR を作って auto-merge)
+#                                                          └──> release-prd (PR を作るだけ。マージは人 = 本番リリース)
 #
 # - Release (build → dev) が成功した後に workflow_run で動く。ビルドが通っていないコミットにはタグを付けない
 # - 通常のマージ:        リリース PR (VERSION と CHANGELOG の更新) を作成/更新して終わる
 # - リリース PR のマージ: タグ (CalVer) と GitHub Release を作り、ECR のイメージに同じタグを付け、
-#                        stg を自動で更新し、prd を更新する PR を作る。その PR のマージが本番リリース
+#                        stg を更新する PR (auto-merge) と prd を更新する PR (手動) を同時に作る。prd の PR のマージが本番リリース
 name: Tagpr
 
 on:
@@ -98,7 +97,7 @@ jobs:
           done
 
   release-stg:
-    # stg の .env をそのタグに更新する PR を作り、auto-merge し、リリース側の Release 実行が成功するまで待つ
+    # stg の .env をそのタグに更新する PR を作り、auto-merge する
     name: release to stg (${{ needs.tagpr.outputs.tag }})
     needs: [tagpr, tag-release-image]
     if: ${{ !cancelled() && needs.tagpr.result == 'success' && needs.tagpr.outputs.tag != '' && needs.tag-release-image.result != 'failure' }}
@@ -127,13 +126,12 @@ jobs:
           title: "Release ${{ env.SERVICE_NAME }} ${{ needs.tagpr.outputs.tag }} to stg"
           body: "Release notes: ${{ github.server_url }}/${{ github.repository }}/releases/tag/${{ needs.tagpr.outputs.tag }}"
           auto_merge: "true"
-          wait_for_release: "true"
 
   release-prd:
-    # stg が適用できたら、prd の .env をそのタグに更新する PR を作る。マージは人が行う (= 本番リリース)
+    # prd の .env をそのタグに更新する PR を作る。マージは人が行う (= 本番リリース)
     name: propose release to prd (${{ needs.tagpr.outputs.tag }})
-    needs: [tagpr, release-stg]
-    if: ${{ !cancelled() && needs.release-stg.result == 'success' && needs.tagpr.outputs.tag != '' }}
+    needs: [tagpr, tag-release-image]
+    if: ${{ !cancelled() && needs.tagpr.result == 'success' && needs.tagpr.outputs.tag != '' && needs.tag-release-image.result != 'failure' }}
     permissions:
       contents: read
     runs-on: ubuntu-latest
