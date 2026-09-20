@@ -1,8 +1,7 @@
 name: Release PR
 description: |
   リリースリポジトリの services/<service>/<env>/.env にあるイメージを更新する PR を作る。
-  auto_merge=true なら auto-merge (無効なら即マージ) し、wait_for_release=true ならマージ後に
-  リリースリポジトリの Release 実行が成功するまで待つ。
+  auto_merge=true なら auto-merge する (リポジトリで auto-merge が無効なら即マージ)。
 
 inputs:
   token:
@@ -29,14 +28,6 @@ inputs:
   auto_merge:
     required: false
     default: "false"
-  wait_for_release:
-    description: マージ後、リリースリポジトリの Release 実行の完了 (成功) を待つ
-    required: false
-    default: "false"
-  timeout_minutes:
-    required: false
-    default: "30"
-
 outputs:
   pr_url:
     description: 作成した PR の URL (変更がなければ空)
@@ -64,8 +55,6 @@ runs:
         TITLE: ${{ inputs.title }}
         BODY: ${{ inputs.body }}
         AUTO_MERGE: ${{ inputs.auto_merge }}
-        WAIT: ${{ inputs.wait_for_release }}
-        TIMEOUT: ${{ inputs.timeout_minutes }}
       run: |
         set -euo pipefail
         mapfile -t images < <(printf '%s\n' "$IMAGES" | sed '/^[[:space:]]*$/d; s/^[[:space:]]*//')
@@ -91,20 +80,3 @@ runs:
         [ "$AUTO_MERGE" = "true" ] || exit 0
         # Allow auto-merge が有効なら CI 通過後にマージ、無効なら即マージ
         gh pr merge "$num" --squash --auto --delete-branch || gh pr merge "$num" --squash --delete-branch
-
-        [ "$WAIT" = "true" ] || exit 0
-        deadline=$(( $(date +%s) + TIMEOUT * 60 ))
-        until sha=$(gh pr view "$num" --json mergeCommit --jq '.mergeCommit.oid // empty') && [ -n "$sha" ]; do
-          [ "$(date +%s)" -lt "$deadline" ] || { echo "::error::timed out waiting for ${url} to be merged"; exit 1; }
-          sleep 10
-        done
-        echo "merged as ${sha}; waiting for the Release run in ${RELEASE_REPO}"
-        until run=$(gh run list -R "$RELEASE_REPO" --workflow Release --commit "$sha" --json databaseId,status,conclusion,url --jq '.[0] // empty') \
-              && [ -n "$run" ] && [ "$(jq -r .status <<<"$run")" = "completed" ]; do
-          [ "$(date +%s)" -lt "$deadline" ] || { echo "::error::timed out waiting for the Release run of ${sha}"; exit 1; }
-          sleep 15
-        done
-        conclusion=$(jq -r .conclusion <<<"$run")
-        echo "Release run: $(jq -r .url <<<"$run") -> ${conclusion}"
-        echo "  - Release run: $(jq -r .url <<<"$run") (${conclusion})" >> "$GITHUB_STEP_SUMMARY"
-        [ "$conclusion" = "success" ] || { echo "::error::Release run for ${ENVIRONMENT} ended with ${conclusion}"; exit 1; }

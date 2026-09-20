@@ -28,12 +28,11 @@ flowchart LR
 2. **main にマージ**: `release.yml` が起動する。
    - イメージを 1 回だけビルドし、`sha-<commit sha>` タグで ECR に push する。
    - app と nginx サイドカーの 2 つのイメージをビルドする (どちらも同じタグ)。
-   - リリースリポジトリの `dev/.env` を書き換える PR を作って auto-merge し、リリース側の Release 実行が成功するのを待つ。**dev** はこれで更新される。
+   - リリースリポジトリの `dev/.env` を書き換える PR を作って auto-merge する。**dev** はこれで更新される。
    - `release.yml` が成功すると `tagpr.yml` が動く。通常のマージならリリース PR (バージョン更新 + CHANGELOG) を作成/更新して終わる。
 3. **リリース PR をマージ**: `release.yml` → `tagpr.yml` が再び動き、tagpr が CalVer タグ (`v2026.0920.0` のような形式) と GitHub Release を作る。
    - 同じイメージ (app, nginx) へリリースタグを付与する。
-   - リリースリポジトリの `stg/.env` をそのタグに書き換える PR を作って auto-merge し、適用成功を待つ。**stg** はこれで更新される。
-   - 続けて `prd/.env` をそのタグに書き換える PR を作る。この PR は auto-merge しない。
+   - リリースリポジトリに 2 つの PR を同時に作る。`stg/.env` をそのタグに書き換える PR は auto-merge し、**stg** はこれで更新される。`prd/.env` を書き換える PR は auto-merge しない。
 4. **prd の PR をマージ**: これが本番リリース。リリースリポジトリ側で prd にデプロイされる。
 5. **ロールバック**: リリースリポジトリで該当コミットを `git revert` した PR をマージする。
 
@@ -59,7 +58,7 @@ flowchart LR
 └── .github/workflows/
     ├── ci.yml                 # PR: test / build
     ├── release.yml            # main push: build → release repo へ dev の PR (auto-merge)
-    ├── actions/release-pr/    # release repo に PR を作る共通処理 (auto-merge / 完了待ち)
+    ├── actions/release-pr/    # release repo に PR を作る共通処理 (auto-merge)
     └── tagpr.yml              # release.yml 成功後: tagpr → (タグ時) リリースタグ付与 → stg の PR (auto-merge) → prd の PR (手動)
 ```
 
