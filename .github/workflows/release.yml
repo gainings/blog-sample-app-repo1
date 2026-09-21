@@ -12,7 +12,7 @@ concurrency:
 
 env:
   RELEASE_REPO_NAME: blog-sample-release-repo
-  SERVICE_NAME: blog-sample-app
+  SERVICE_NAME: ${{ github.event.repository.name }}
 
 jobs:
   build:

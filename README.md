@@ -83,7 +83,7 @@ flowchart LR
 | variable | `GH_APP_ID` | `123456` |
 | secret | `GH_APP_PRIVATE_KEY` | GitHub App の秘密鍵 (PEM) |
 
-デプロイ先 (ECS) に関する設定はすべてリリースリポジトリ側の `blog-sample-app/{dev,stg,prd}/` にあります。
+デプロイ先 (ECS) に関する設定はすべてリリースリポジトリ側の `blog-sample-app-repo1/{dev,stg,prd}/` (ディレクトリ名はこのリポジトリ名) にあります。
 
 ### 3. バージョンの決まり方
 
