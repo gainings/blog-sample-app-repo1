@@ -59,7 +59,7 @@ flowchart LR
 └── .github/workflows/
     ├── ci.yml                 # PR: test / build
     ├── release.yml            # main push: build → release repo へ dev の PR (auto-merge)
-    ├── actions/release-pr/    # release repo に PR を作る共通処理 (auto-merge)
+    ├── actions/request-release/ # release repo の Propose release を起動する
     ├── tagpr.yml              # release.yml 成功後: tagpr (リリース PR の作成/更新、マージ時にタグ作成)
     └── release-tag.yml        # タグ push: イメージにリリースタグ付与 → stg の PR (auto-merge) と prd の PR (手動)
 ```
