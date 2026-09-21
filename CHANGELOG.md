@@ -1,5 +1,13 @@
 # Changelog
 
+## [v2026.0921.0](https://github.com/gainings/blog-sample-app-repo1/compare/v2026.0920.4...v2026.0921.0) - 2026-09-21
+
+- Point at ecs/blog-sample-app in the release repo by @gainings in https://github.com/gainings/blog-sample-app-repo1/pull/13
+- Follow the service-first layout of the release repo by @gainings in https://github.com/gainings/blog-sample-app-repo1/pull/14
+- Use the repository name as the release directory name by @gainings in https://github.com/gainings/blog-sample-app-repo1/pull/15
+- Name the release directory by APP_NAME by @gainings in https://github.com/gainings/blog-sample-app-repo1/pull/16
+- Tweak hello message by @gainings in https://github.com/gainings/blog-sample-app-repo1/pull/17
+
 ## [v2026.0920.4](https://github.com/gainings/blog-sample-app-repo1/compare/v2026.0920.3...v2026.0920.4) - 2026-09-20
 
 - Split tag handling out of tagpr.yml into release-tag.yml (on: push: tags) by @gainings in https://github.com/gainings/blog-sample-app-repo1/pull/10
