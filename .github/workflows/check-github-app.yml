@@ -38,6 +38,6 @@ jobs:
         run: |
           set -euo pipefail
           echo "app: ${{ steps.token.outputs.app-slug }}"
-          gh api /installation/repositories --jq '.repositories[] | "\(.full_name) \(.permissions)"'
-          gh api /installation/repositories --jq '.repositories[0].permissions' | jq -e '.contents == null and .actions == "write"' >/dev/null \
-            || { echo "::error::requester must have actions:write only"; exit 1; }
+          gh api /installation/repositories --jq '.repositories[].full_name' | tee repos.txt
+          [ "$(cat repos.txt)" = "${{ github.repository_owner }}/blog-sample-release-repo" ] \
+            || { echo "::error::requester must be installed on the release repo only"; exit 1; }
