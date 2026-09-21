@@ -1,4 +1,4 @@
-name: Check GitHub App
+name: Check GitHub Apps
 
 on:
   workflow_dispatch:
@@ -6,28 +6,38 @@ on:
 permissions: {}
 
 jobs:
-  check:
+  tagpr-bot:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/create-github-app-token@v2
-        id: app-token
+        id: token
         with:
-          app-id: ${{ vars.GH_APP_ID }}
-          private-key: ${{ secrets.GH_APP_PRIVATE_KEY }}
-          owner: ${{ github.repository_owner }}
-          repositories: |
-            ${{ github.event.repository.name }}
-            blog-sample-release-repo
-      - name: List accessible repositories
-        env:
-          GH_TOKEN: ${{ steps.app-token.outputs.token }}
-          SLUG: ${{ steps.app-token.outputs.app-slug }}
+          app-id: ${{ vars.TAGPR_APP_ID }}
+          private-key: ${{ secrets.TAGPR_APP_PRIVATE_KEY }}
+      - env:
+          GH_TOKEN: ${{ steps.token.outputs.token }}
         run: |
           set -euo pipefail
-          echo "app: ${SLUG}"
+          echo "app: ${{ steps.token.outputs.app-slug }}"
           gh api /installation/repositories --jq '.repositories[].full_name' | tee repos.txt
-          for r in "${{ github.repository }}" "${{ github.repository_owner }}/blog-sample-release-repo"; do
-            grep -qx "$r" repos.txt || { echo "::error::App is not installed on $r"; exit 1; }
-          done
-          echo "permissions:"; gh api /installation/repositories --jq '.repositories[0].permissions'
-          echo "OK: installed on both repositories"
+          grep -qx "${{ github.repository }}" repos.txt || { echo "::error::tagpr bot is not installed on ${{ github.repository }}"; exit 1; }
+          if grep -q "blog-sample-release-repo" repos.txt; then echo "::error::tagpr bot must not be installed on the release repo"; exit 1; fi
+
+  requester:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/create-github-app-token@v2
+        id: token
+        with:
+          app-id: ${{ vars.REQUESTER_APP_ID }}
+          private-key: ${{ secrets.REQUESTER_APP_PRIVATE_KEY }}
+          owner: ${{ github.repository_owner }}
+          repositories: blog-sample-release-repo
+      - env:
+          GH_TOKEN: ${{ steps.token.outputs.token }}
+        run: |
+          set -euo pipefail
+          echo "app: ${{ steps.token.outputs.app-slug }}"
+          gh api /installation/repositories --jq '.repositories[] | "\(.full_name) \(.permissions)"'
+          gh api /installation/repositories --jq '.repositories[0].permissions' | jq -e '.contents == null and .actions == "write"' >/dev/null \
+            || { echo "::error::requester must have actions:write only"; exit 1; }

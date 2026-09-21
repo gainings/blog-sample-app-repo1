@@ -66,11 +66,17 @@ flowchart LR
 
 ## セットアップ
 
-### 1. GitHub App
+### 1. GitHub App (3 つ)
 
-1. Organization または個人アカウントで GitHub App を作成する。権限は **Contents: Read and write**、**Pull requests: Read and write**。
-2. このリポジトリと `blog-sample-release-repo` の両方にインストールする。
-3. App ID を repository variable `GH_APP_ID` に、秘密鍵を secret `GH_APP_PRIVATE_KEY` に設定する。
+役割ごとに App を分け、鍵の置き場所と権限を閉じる。
+
+| App | 権限 | インストール先 | 鍵の置き場所 |
+|---|---|---|---|
+| tagpr 用 | Contents / Pull requests: Read and write | このリポジトリ | このリポジトリ (`TAGPR_APP_ID`, `TAGPR_APP_PRIVATE_KEY`) |
+| 要求用 | Actions: Read and write | リリースリポジトリ | このリポジトリ (`REQUESTER_APP_ID`, `REQUESTER_APP_PRIVATE_KEY`) |
+| リリース用 | Contents / Pull requests: Read and write | リリースリポジトリ | リリースリポジトリ (`GH_APP_ID`, `GH_APP_PRIVATE_KEY`) |
+
+このリポジトリが持つ鍵では、リリースリポジトリの内容を書けない (`Propose release` を起動できるだけ)。
 
 ### 2. Repository variables / secrets
 
@@ -80,8 +86,8 @@ flowchart LR
 | variable | `AWS_BUILD_ROLE_ARN` | `arn:aws:iam::111111111111:role/gha-blog-sample-app-build` (ECR push 用 OIDC ロール) |
 | variable | `ECR_REGISTRY` | `111111111111.dkr.ecr.ap-northeast-1.amazonaws.com` |
 | variable | `ECR_REPOSITORY` | `blog-sample-app` |
-| variable | `GH_APP_ID` | `123456` |
-| secret | `GH_APP_PRIVATE_KEY` | GitHub App の秘密鍵 (PEM) |
+| variable | `TAGPR_APP_ID` / `REQUESTER_APP_ID` | 各 App の App ID |
+| secret | `TAGPR_APP_PRIVATE_KEY` / `REQUESTER_APP_PRIVATE_KEY` | 各 App の秘密鍵 (PEM) |
 
 デプロイ先 (ECS) に関する設定はすべてリリースリポジトリ側の `blog-sample-app/{dev,stg,prd}/` (ディレクトリ名は `release.yml` の `APP_NAME`) にあります。
 
