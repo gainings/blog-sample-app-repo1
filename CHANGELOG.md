@@ -1,5 +1,12 @@
 # Changelog
 
+## [v2026.0921.1](https://github.com/gainings/blog-sample-app-repo1/compare/v2026.0921.0...v2026.0921.1) - 2026-09-21
+
+- Request releases via the release repo's Propose release workflow by @gainings in https://github.com/gainings/blog-sample-app-repo1/pull/18
+- Convert release-tag.yml to the request-release action by @gainings in https://github.com/gainings/blog-sample-app-repo1/pull/19
+- Use separate GitHub Apps for tagpr and for release requests by @gainings in https://github.com/gainings/blog-sample-app-repo1/pull/20
+- Check installation targets instead of repository permissions by @gainings in https://github.com/gainings/blog-sample-app-repo1/pull/21
+
 ## [v2026.0921.0](https://github.com/gainings/blog-sample-app-repo1/compare/v2026.0920.4...v2026.0921.0) - 2026-09-21
 
 - Point at ecs/blog-sample-app in the release repo by @gainings in https://github.com/gainings/blog-sample-app-repo1/pull/13
