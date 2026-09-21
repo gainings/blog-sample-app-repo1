@@ -14,8 +14,6 @@ import (
 	"time"
 )
 
-// VERSION は tagpr がリリース時に書き換える。イメージに埋め込んで /  で返す。
-//
 //go:embed VERSION
 var rawVersion string
 
@@ -55,7 +53,6 @@ func main() {
 		ReadHeaderTimeout: 5 * time.Second,
 	}
 
-	// ECS はローリング更新時に SIGTERM を送ってくる。処理中のリクエストを捌いてから終了する。
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGTERM, syscall.SIGINT)
 	defer stop()
 

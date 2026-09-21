@@ -4,6 +4,4 @@
 	versionFile = VERSION
 	changelog = true
 	release = true
-	# CalVer: v2026.0920.0 のような形式。同日に複数回リリースすると MICRO が増える。
-	# CalVer モードでは tagpr:major / tagpr:minor ラベルは無視される。
 	calendarVersioning = YYYY.0M0D.MICRO

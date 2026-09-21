@@ -1,10 +1,3 @@
-# main へのマージを起点にしたリリースパイプライン (アプリ側)。
-#
-#   build ──> release-dev : リリースリポジトリの dev/.env を更新する PR (auto-merge)
-#
-# - このリポジトリはイメージ (app と nginx サイドカー) のビルドだけを担当する。デプロイ定義と実行は
-#   blog-sample-release-repo にあり、そこの main に入ったものがリリースされる
-# - main にマージされるたびに dev が更新される。stg / prd は tagpr.yml がタグ作成時に更新する
 name: Release
 
 on:
@@ -19,7 +12,6 @@ concurrency:
 
 env:
   RELEASE_REPO_NAME: blog-sample-release-repo
-  # リリースリポジトリ側の services/<SERVICE_NAME>/ に対応する
   SERVICE_NAME: blog-sample-app
 
 jobs:
@@ -42,7 +34,6 @@ jobs:
       - id: meta
         run: echo "image_tag=sha-${GITHUB_SHA}" >> "$GITHUB_OUTPUT"
 
-      # AWS_BUILD_ROLE_ARN が未設定なら AWS には接続せず、ビルドだけして push を省略する (フローの確認用)
       - uses: aws-actions/configure-aws-credentials@v4
         if: vars.AWS_BUILD_ROLE_ARN != ''
         with:
@@ -80,7 +71,6 @@ jobs:
         run: echo "::warning::AWS_BUILD_ROLE_ARN is not set. Images ${{ vars.ECR_REPOSITORY }}:${{ steps.meta.outputs.image_tag }} and ${{ vars.ECR_REPOSITORY }}-nginx:${{ steps.meta.outputs.image_tag }} were built but NOT pushed."
 
   release-dev:
-    # dev の .env を更新する PR を作り、auto-merge する
     name: release to dev
     needs: build
     permissions:

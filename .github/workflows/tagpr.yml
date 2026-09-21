@@ -1,9 +1,3 @@
-# tagpr によるリリース PR の管理 (VERSION / CHANGELOG の更新と、リリース PR マージ時のタグ作成)。
-#
-# - Release (build → dev) が成功した後に workflow_run で動く。ビルドが通っていないコミットにはタグを付けない
-# - 通常のマージ:        リリース PR を作成/更新して終わる
-# - リリース PR のマージ: タグ (CalVer) と GitHub Release を作る。タグは GitHub App のトークンで push されるので
-#                        release-tag.yml (on: push: tags) が起動し、stg / prd への反映はそちらが行う
 name: Tagpr
 
 on:
@@ -30,7 +24,6 @@ jobs:
       tag: ${{ steps.tagpr.outputs.tag }}
       sha: ${{ steps.head.outputs.sha }}
     steps:
-      # GITHUB_TOKEN で作った PR には CI が走らないため、GitHub App のトークンを使う
       - uses: actions/create-github-app-token@v2
         id: app-token
         with:

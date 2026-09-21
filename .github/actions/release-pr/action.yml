@@ -1,24 +1,18 @@
 name: Release PR
-description: |
-  リリースリポジトリの services/<service>/<env>/.env にあるイメージを更新する PR を作る。
-  auto_merge=true なら auto-merge する (リポジトリで auto-merge が無効なら即マージ)。
+description: Update images in the release repo and open a PR
 
 inputs:
   token:
-    description: リリースリポジトリに対する contents / pull_requests write 権限を持つ GitHub App トークン
     required: true
   app_slug:
-    description: GitHub App の slug (コミットの author に使う)
     required: true
   release_repo:
-    description: owner/name
     required: true
   service:
     required: true
   environment:
     required: true
   images:
-    description: 1 行 1 イメージ (registry/repository:tag)
     required: true
   title:
     required: true
@@ -30,7 +24,6 @@ inputs:
     default: "false"
 outputs:
   pr_url:
-    description: 作成した PR の URL (変更がなければ空)
     value: ${{ steps.pr.outputs.pr_url }}
 
 runs:
@@ -78,5 +71,4 @@ runs:
         echo "- ${ENVIRONMENT}: ${url}" >> "$GITHUB_STEP_SUMMARY"
 
         [ "$AUTO_MERGE" = "true" ] || exit 0
-        # Allow auto-merge が有効なら CI 通過後にマージ、無効なら即マージ
         gh pr merge "$num" --squash --auto --delete-branch || gh pr merge "$num" --squash --delete-branch

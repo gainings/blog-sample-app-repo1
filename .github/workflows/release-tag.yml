@@ -1,11 +1,3 @@
-# タグ (CalVer, vYYYY.MMDD.N) が push された時のリリース処理。
-#
-#   tag-release-image ──┬──> release-stg (リリースリポジトリに PR を作って auto-merge)
-#                       └──> release-prd (PR を作るだけ。マージは人 = 本番リリース)
-#
-# - タグは tagpr.yml が GitHub App のトークンで push する (GITHUB_TOKEN で push したタグはワークフローを起動しないが、
-#   App トークンなら起動する)。手で `git tag` して push しても同じように動く
-# - ECR 上の sha-<commit> イメージに同じタグを付け、リリースリポジトリの stg / prd の .env をそのタグに更新する
 name: Release tag
 
 on:
@@ -20,14 +12,11 @@ concurrency:
 
 env:
   RELEASE_REPO_NAME: blog-sample-release-repo
-  # リリースリポジトリ側の services/<SERVICE_NAME>/ に対応する
   SERVICE_NAME: blog-sample-app
 
 jobs:
   tag-release-image:
-    # リリース対象のイメージに CalVer タグも付ける (stg / prd はこのタグを参照する)
     name: tag images as ${{ github.ref_name }}
-    # AWS_BUILD_ROLE_ARN が未設定 (AWS なしでフローを確認している) ならスキップ
     if: vars.AWS_BUILD_ROLE_ARN != ''
     runs-on: ubuntu-latest
     permissions:
@@ -56,7 +45,6 @@ jobs:
           done
 
   release-stg:
-    # stg の .env をそのタグに更新する PR を作り、auto-merge する
     name: release to stg
     needs: tag-release-image
     if: ${{ !cancelled() && needs.tag-release-image.result != 'failure' }}
@@ -87,7 +75,6 @@ jobs:
           auto_merge: "true"
 
   release-prd:
-    # prd の .env をそのタグに更新する PR を作る。マージは人が行う (= 本番リリース)
     name: propose release to prd
     needs: tag-release-image
     if: ${{ !cancelled() && needs.tag-release-image.result != 'failure' }}
