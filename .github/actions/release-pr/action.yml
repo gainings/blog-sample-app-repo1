@@ -8,7 +8,7 @@ inputs:
     required: true
   release_repo:
     required: true
-  service:
+  app:
     required: true
   environment:
     required: true
@@ -42,7 +42,7 @@ runs:
         GH_TOKEN: ${{ inputs.token }}
         BOT: ${{ inputs.app_slug }}[bot]
         RELEASE_REPO: ${{ inputs.release_repo }}
-        SERVICE: ${{ inputs.service }}
+        APP: ${{ inputs.app }}
         ENVIRONMENT: ${{ inputs.environment }}
         IMAGES: ${{ inputs.images }}
         TITLE: ${{ inputs.title }}
@@ -51,14 +51,14 @@ runs:
       run: |
         set -euo pipefail
         mapfile -t images < <(printf '%s\n' "$IMAGES" | sed '/^[[:space:]]*$/d; s/^[[:space:]]*//')
-        scripts/set-image.sh "${SERVICE}/${ENVIRONMENT}" "${images[@]}"
+        scripts/set-image.sh "${APP}/${ENVIRONMENT}" "${images[@]}"
         if git diff --quiet; then
           echo "${ENVIRONMENT}: already up to date"
           echo "pr_url=" >> "$GITHUB_OUTPUT"
           exit 0
         fi
 
-        branch="release/${SERVICE}/${ENVIRONMENT}/${images[0]##*:}"
+        branch="release/${APP}/${ENVIRONMENT}/${images[0]##*:}"
         git config user.name "$BOT"
         git config user.email "${BOT}@users.noreply.github.com"
         git checkout -b "$branch"
