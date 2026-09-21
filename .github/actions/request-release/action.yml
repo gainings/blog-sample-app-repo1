@@ -1,0 +1,38 @@
+name: Request release
+description: Trigger the release repository's Propose release workflow
+
+inputs:
+  token:
+    required: true
+  release_repo:
+    required: true
+  app:
+    required: true
+  environment:
+    required: true
+  images:
+    required: true
+  auto_merge:
+    required: false
+    default: "false"
+
+runs:
+  using: composite
+  steps:
+    - shell: bash
+      env:
+        GH_TOKEN: ${{ inputs.token }}
+        RELEASE_REPO: ${{ inputs.release_repo }}
+        APP: ${{ inputs.app }}
+        ENVIRONMENT: ${{ inputs.environment }}
+        IMAGES: ${{ inputs.images }}
+        AUTO_MERGE: ${{ inputs.auto_merge }}
+        SOURCE: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+      run: |
+        set -euo pipefail
+        images=$(printf '%s\n' "$IMAGES" | sed '/^[[:space:]]*$/d; s/^[[:space:]]*//' | paste -sd, -)
+        gh workflow run propose.yml -R "$RELEASE_REPO" \
+          -f app="$APP" -f environment="$ENVIRONMENT" -f images="$images" \
+          -f auto_merge="$AUTO_MERGE" -f source="$SOURCE"
+        echo "requested: ${APP} ${ENVIRONMENT} ${images} (auto_merge=${AUTO_MERGE})"
+        echo "- ${ENVIRONMENT}: ${images}" >> "$GITHUB_STEP_SUMMARY"
